@@ -1,0 +1,97 @@
+[
+  {
+    "name": "BlobUploadAudit",
+    "scriptFile": "ProcessingFunctions.dll",
+    "entryPoint": "ProcessingFunctions.BlobUploadAuditFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "blob",
+        "direction": "In",
+        "type": "blobTrigger",
+        "path": "drone-images/{name}",
+        "connection": "StorageConnection",
+        "properties": {
+          "supportsDeferredBinding": "True"
+        }
+      }
+    ]
+  },
+  {
+    "name": "TelemetryGet",
+    "scriptFile": "ProcessingFunctions.dll",
+    "entryPoint": "ProcessingFunctions.TelemetryGetFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "request",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "telemetry/latest",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "IrrigationCommandPost",
+    "scriptFile": "ProcessingFunctions.dll",
+    "entryPoint": "ProcessingFunctions.IrrigationCommandPostFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "request",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "post"
+        ],
+        "route": "irrigation/command",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "IrrigationCommandQueue",
+    "scriptFile": "ProcessingFunctions.dll",
+    "entryPoint": "ProcessingFunctions.IrrigationCommandQueueFunction.RunAsync",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "queueMessage",
+        "direction": "In",
+        "type": "queueTrigger",
+        "dataType": "String",
+        "queueName": "irrigation-commands",
+        "connection": "IrrigationQueueConnection",
+        "properties": {}
+      }
+    ]
+  }
+]

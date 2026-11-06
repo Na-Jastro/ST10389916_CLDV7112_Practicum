@@ -1,0 +1,30 @@
+@model RegisterViewModel
+
+<h2 class="h4 mb-3">Register User</h2>
+@if (ViewBag.Message != null)
+{
+    <div class="alert alert-success">@ViewBag.Message</div>
+}
+@if (!ViewData.ModelState.IsValid)
+{
+    <div class="alert alert-danger">Validation failed.</div>
+}
+<form asp-action="Register" method="post">
+    <div class="mb-3">
+        <label class="form-label">Username</label>
+        <input asp-for="Username" class="form-control" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Password</label>
+        <input asp-for="Password" type="password" class="form-control" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Role</label>
+        <select asp-for="Role" class="form-select">
+        <option>Farmer</option>
+        <option>Agronomist</option>
+        <option>Admin</option>
+        </select>
+    </div>
+    <button type="submit" class="btn btn-success">Create User</button>
+</form>

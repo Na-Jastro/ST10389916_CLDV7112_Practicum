@@ -1,0 +1,88 @@
+name: Azure End-to-End Deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  RESOURCE_GROUP: rg-realtime-processing
+  LOCATION: southafricanorth
+  APP_NAME: practicum-st10389916
+  WEB_PROJECT: ST10389916_CLDV7112_Practicum/ST10389916_CLDV7112_Practicum.csproj
+  FUNC_PROJECT: ST10389916_CLDV7112_Practicum/src/ProcessingFunctions/ProcessingFunctions.csproj
+  INFRA_TEMPLATE: ST10389916_CLDV7112_Practicum/infra/main.bicep
+  SQL_SCHEMA: ST10389916_CLDV7112_Practicum/infra/sql/schema.sql
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            10.0.x
+            8.0.x
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Ensure Resource Group
+        run: az group create --name "$RESOURCE_GROUP" --location "$LOCATION"
+
+      - name: Deploy Infrastructure (Bicep)
+        id: infra
+        run: |
+          DEPLOY_OUTPUT=$(az deployment group create \
+            --resource-group "$RESOURCE_GROUP" \
+            --template-file "$INFRA_TEMPLATE" \
+            --parameters appName="$APP_NAME" sqlAdminLogin="${{ secrets.SQL_ADMIN_LOGIN }}" sqlAdminPassword="${{ secrets.SQL_ADMIN_PASSWORD }}" \
+            --query properties.outputs -o json)
+
+          echo "web_app_name=$(echo $DEPLOY_OUTPUT | jq -r '.webAppName.value')" >> "$GITHUB_OUTPUT"
+          echo "functions_app_name=$(echo $DEPLOY_OUTPUT | jq -r '.functionsAppName.value')" >> "$GITHUB_OUTPUT"
+          echo "sql_server_fqdn=$(echo $DEPLOY_OUTPUT | jq -r '.sqlServerFqdn.value')" >> "$GITHUB_OUTPUT"
+          echo "sql_database_name=$(echo $DEPLOY_OUTPUT | jq -r '.sqlDatabaseName.value')" >> "$GITHUB_OUTPUT"
+
+      - name: Apply SQL Schema
+        run: |
+          sudo ACCEPT_EULA=Y apt-get update
+          sudo ACCEPT_EULA=Y apt-get install -y mssql-tools18 unixodbc-dev
+          /opt/mssql-tools18/bin/sqlcmd \
+            -S "${{ steps.infra.outputs.sql_server_fqdn }}" \
+            -d "${{ steps.infra.outputs.sql_database_name }}" \
+            -U "${{ secrets.SQL_ADMIN_LOGIN }}" \
+            -P "${{ secrets.SQL_ADMIN_PASSWORD }}" \
+            -N \
+            -C \
+            -i "$SQL_SCHEMA"
+
+      - name: Publish Web App
+        run: dotnet publish "$WEB_PROJECT" -c Release -o ./publish-web
+
+      - name: Deploy Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ steps.infra.outputs.web_app_name }}
+          package: ./publish-web
+
+      - name: Publish Functions App
+        run: dotnet publish "$FUNC_PROJECT" -c Release -o ./publish-func
+
+      - name: Deploy Functions App
+        uses: Azure/functions-action@v1
+        with:
+          app-name: ${{ steps.infra.outputs.functions_app_name }}
+          package: ./publish-func

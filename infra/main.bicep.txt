@@ -1,0 +1,241 @@
+// Real-time data processing system - full infrastructure (requirements a-i).
+@description('Base name used to build resource names.')
+param appName string = 'practicum-st10389916'
+@description('Azure region for all resources.')
+param location string = resourceGroup().location
+@description('App Service plan SKU. S1 supports autoscale.')
+param sku string = 'S1'
+@description('Azure SQL administrator login name.')
+param sqlAdminLogin string = 'sqladmin'
+@description('Azure SQL administrator password.')
+@secure()
+param sqlAdminPassword string
+
+var planName = 'plan-${appName}'
+var webAppName = 'app-${appName}'
+var functionsAppName = 'func-${appName}'
+var functionsPlanName = 'planfunc-${appName}'
+var storageName = toLower(replace('st${appName}', '-', ''))
+var eventHubNamespaceName = 'ehns-${appName}'
+var eventHubName = 'events'
+var sqlServerName = 'sql-${appName}'
+var sqlDbName = 'RealtimeProcessing'
+var logAnalyticsName = 'log-${appName}'
+var appInsightsName = 'appi-${appName}'
+
+resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
+  name: logAnalyticsName
+  location: location
+  properties: {
+	sku: { name: 'PerGB2018' }
+	retentionInDays: 30
+  }
+}
+
+resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
+  name: appInsightsName
+  location: location
+  kind: 'web'
+  properties: {
+	Application_Type: 'web'
+	WorkspaceResourceId: logAnalytics.id
+  }
+}
+
+resource eventHubNamespace 'Microsoft.EventHub/namespaces@2024-01-01' = {
+  name: eventHubNamespaceName
+  location: location
+  sku: { name: 'Standard', tier: 'Standard', capacity: 1 }
+  properties: {
+	isAutoInflateEnabled: true
+	maximumThroughputUnits: 10
+  }
+}
+
+resource eventHub 'Microsoft.EventHub/namespaces/eventhubs@2024-01-01' = {
+  parent: eventHubNamespace
+  name: eventHubName
+  properties: {
+	messageRetentionInDays: 1
+	partitionCount: 4
+  }
+}
+
+resource eventHubAuthRule 'Microsoft.EventHub/namespaces/eventhubs/authorizationRules@2024-01-01' = {
+  parent: eventHub
+  name: 'AppAccess'
+  properties: {
+	rights: [ 'Send', 'Listen' ]
+  }
+}
+
+resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' = {
+  name: sqlServerName
+  location: location
+  properties: {
+	administratorLogin: sqlAdminLogin
+	administratorLoginPassword: sqlAdminPassword
+	minimalTlsVersion: '1.2'
+	publicNetworkAccess: 'Enabled'
+  }
+}
+
+resource sqlDb 'Microsoft.Sql/servers/databases@2023-08-01-preview' = {
+  parent: sqlServer
+  name: sqlDbName
+  location: location
+  sku: { name: 'S0', tier: 'Standard' }
+  properties: {
+	collation: 'SQL_Latin1_General_CP1_CI_AS'
+	maxSizeBytes: 2147483648
+  }
+}
+
+resource sqlFirewallAzure 'Microsoft.Sql/servers/firewallRules@2023-08-01-preview' = {
+  parent: sqlServer
+  name: 'AllowAllAzureServices'
+  properties: {
+	startIpAddress: '0.0.0.0'
+	endIpAddress: '0.0.0.0'
+  }
+}
+
+var sqlConnectionString = 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Database=${sqlDbName};User ID=${sqlAdminLogin};Password=${sqlAdminPassword};Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;'
+
+resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
+  name: planName
+  location: location
+  sku: { name: sku, tier: 'Standard' }
+  kind: 'linux'
+  properties: { reserved: true }
+}
+
+resource webApp 'Microsoft.Web/sites@2023-12-01' = {
+  name: webAppName
+  location: location
+  identity: { type: 'SystemAssigned' }
+  properties: {
+	serverFarmId: plan.id
+	httpsOnly: true
+	siteConfig: {
+	  linuxFxVersion: 'DOTNETCORE|10.0'
+	  ftpsState: 'Disabled'
+	  minTlsVersion: '1.2'
+	  appSettings: [
+		{ name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
+		{ name: 'EventHub__ConnectionString', value: listKeys(eventHubAuthRule.id, eventHubAuthRule.apiVersion).primaryConnectionString }
+		{ name: 'EventHub__Name', value: eventHubName }
+		{ name: 'ConnectionStrings__Sql', value: sqlConnectionString }
+	  ]
+	}
+  }
+}
+
+resource webAutoscale 'Microsoft.Insights/autoscalesettings@2022-10-01' = {
+  name: 'autoscale-${planName}'
+  location: location
+  properties: {
+	enabled: true
+	targetResourceUri: plan.id
+	profiles: [
+	  {
+		name: 'CPU and load based'
+		capacity: { minimum: '1', maximum: '5', default: '1' }
+		rules: [
+		  {
+			metricTrigger: {
+			  metricName: 'CpuPercentage'
+			  metricResourceUri: plan.id
+			  timeGrain: 'PT1M'
+			  statistic: 'Average'
+			  timeWindow: 'PT5M'
+			  timeAggregation: 'Average'
+			  operator: 'GreaterThan'
+			  threshold: 70
+			}
+			scaleAction: { direction: 'Increase', type: 'ChangeCount', value: '1', cooldown: 'PT5M' }
+		  }
+		  {
+			metricTrigger: {
+			  metricName: 'CpuPercentage'
+			  metricResourceUri: plan.id
+			  timeGrain: 'PT1M'
+			  statistic: 'Average'
+			  timeWindow: 'PT5M'
+			  timeAggregation: 'Average'
+			  operator: 'LessThan'
+			  threshold: 30
+			}
+			scaleAction: { direction: 'Decrease', type: 'ChangeCount', value: '1', cooldown: 'PT5M' }
+		  }
+		]
+	  }
+	]
+  }
+}
+
+resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: storageName
+  location: location
+  sku: { name: 'Standard_LRS' }
+  kind: 'StorageV2'
+  properties: { minimumTlsVersion: 'TLS1_2' }
+}
+
+resource functionsPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
+  name: functionsPlanName
+  location: location
+  sku: { name: 'EP1', tier: 'ElasticPremium' }
+  kind: 'elastic'
+  properties: { reserved: true, maximumElasticWorkerCount: 10 }
+}
+
+var storageConnectionString = 'DefaultEndpointsProtocol=https;AccountName=${storage.name};AccountKey=${storage.listKeys().keys[0].value};EndpointSuffix=${environment().suffixes.storage}'
+
+resource functionsApp 'Microsoft.Web/sites@2023-12-01' = {
+  name: functionsAppName
+  location: location
+  kind: 'functionapp,linux'
+  identity: { type: 'SystemAssigned' }
+  properties: {
+	serverFarmId: functionsPlan.id
+	httpsOnly: true
+	siteConfig: {
+	  linuxFxVersion: 'DOTNET-ISOLATED|8.0'
+	  minTlsVersion: '1.2'
+	  functionAppScaleLimit: 10
+	  appSettings: [
+		{ name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' }
+		{ name: 'FUNCTIONS_WORKER_RUNTIME', value: 'dotnet-isolated' }
+		{ name: 'AzureWebJobsStorage', value: storageConnectionString }
+		{ name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING', value: storageConnectionString }
+		{ name: 'WEBSITE_CONTENTSHARE', value: toLower(functionsAppName) }
+		{ name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
+		{ name: 'EventHubConnection', value: listKeys(eventHubAuthRule.id, eventHubAuthRule.apiVersion).primaryConnectionString }
+		{ name: 'EventHubName', value: eventHubName }
+		{ name: 'SqlConnectionString', value: sqlConnectionString }
+	  ]
+	}
+  }
+}
+
+var readerRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')
+
+resource readerAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(resourceGroup().id, webApp.id, readerRoleId)
+  scope: resourceGroup()
+  properties: {
+	principalId: webApp.identity.principalId
+	roleDefinitionId: readerRoleId
+	principalType: 'ServicePrincipal'
+  }
+}
+
+output webAppName string = webApp.name
+output webAppUrl string = 'https://${webApp.properties.defaultHostName}'
+output functionsAppName string = functionsApp.name
+output eventHubNamespaceName string = eventHubNamespace.name
+output eventHubName string = eventHub.name
+output sqlServerFqdn string = sqlServer.properties.fullyQualifiedDomainName
+output sqlDatabaseName string = sqlDb.name
+output appInsightsName string = appInsights.name

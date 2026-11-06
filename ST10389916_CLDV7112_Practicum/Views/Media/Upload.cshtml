@@ -1,0 +1,15 @@
+<h2 class="h4 mb-3">Upload Drone Media</h2>
+@if (ViewBag.Message != null)
+{
+    <div class="alert alert-success">@ViewBag.Message</div>
+}
+@if (ViewBag.Error != null)
+{
+    <div class="alert alert-danger">@ViewBag.Error</div>
+}
+<form asp-action="Upload" method="post" enctype="multipart/form-data">
+    <div class="mb-3">
+        <input class="form-control" type="file" name="file" />
+    </div>
+    <button type="submit" class="btn btn-success">Upload</button>
+</form>

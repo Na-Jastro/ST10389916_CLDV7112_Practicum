@@ -1,0 +1,31 @@
+@model IrrigationViewModel
+
+<h2 class="h4 mb-3">Field Dashboard</h2>
+@if (ViewBag.Error != null)
+{
+    <div class="alert alert-danger">Error: @ViewBag.Error</div>
+}
+@if (ViewBag.Message != null)
+{
+    <div class="alert alert-success">Result: @ViewBag.Message</div>
+}
+
+<h3 class="h6">Latest Telemetry (JSON)</h3>
+<pre class="bg-dark text-light p-3 rounded">@ViewBag.TelemetryJson</pre>
+
+<h3 class="h6 mt-4">Trigger Irrigation</h3>
+<form asp-action="TriggerIrrigation" method="post">
+    <div class="mb-3">
+        <label class="form-label">Device ID</label>
+        <input asp-for="DeviceId" class="form-control" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Field ID</label>
+        <input asp-for="FieldId" class="form-control" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Action</label>
+        <input asp-for="Action" class="form-control" />
+    </div>
+    <button type="submit" class="btn btn-warning">Send Command</button>
+</form>
